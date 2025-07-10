@@ -1,65 +1,31 @@
-ARG PYTHON_VERSION=3.12
-FROM python:$PYTHON_VERSION
+# Use a lightweight but compatible Python base image
+FROM python:3.10-slim-buster
 
-# Configure environment
-# superset/gunicorn recommended defaults:
-# - https://superset.apache.org/docs/installation/configuring-superset#running-on-a-wsgi-http-server
-# - https://docs.gunicorn.org/en/latest/configure.html
-ENV FLASK_APP=superset
-ENV GUNICORN_BIND=0.0.0.0:8088
-ENV GUNICORN_LIMIT_REQUEST_FIELD_SIZE=8190
-ENV GUNICORN_LIMIT_REQUEST_LINE=4094
-ENV GUNICORN_THREADS=4
-ENV GUNICORN_TIMEOUT=120
-ENV GUNICORN_WORKERS=10
-ENV GUNICORN_WORKER_CLASS=gevent
-ENV LANG=C.UTF-8
-ENV LC_ALL=C.UTF-8
-ENV PYTHONPATH=/etc/superset:/home/superset
-ENV SUPERSET_HOME=/var/lib/superset
-ENV GUNICORN_CMD_ARGS="--bind $GUNICORN_BIND --limit-request-field_size $GUNICORN_LIMIT_REQUEST_FIELD_SIZE --limit-request-line $GUNICORN_LIMIT_REQUEST_LINE --threads $GUNICORN_THREADS --timeout $GUNICORN_TIMEOUT --workers $GUNICORN_WORKERS --worker-class $GUNICORN_WORKER_CLASS"
+# Set working directory
+WORKDIR /app
 
-# Configure filesystem
-COPY bin /usr/local/bin
-VOLUME /etc/superset
-VOLUME /home/superset
-VOLUME /var/lib/superset
-
-# Create superset user & install dependencies
-WORKDIR /home/superset
-RUN groupadd supergroup && \
-    useradd -U -G supergroup superset && \
-    mkdir -p $SUPERSET_HOME && \
-    mkdir -p /etc/superset && \
-    chown -R superset:superset $SUPERSET_HOME && \
-    chown -R superset:superset /home/superset && \
-    chown -R superset:superset /etc/superset && \
-    apt-get update && \
-    apt-get install -y \
+# Install system dependencies needed for Superset and PostgreSQL client
+RUN apt-get update && apt-get install -y \
     build-essential \
-    curl \
-    default-libmysqlclient-dev \
-    freetds-bin \
-    freetds-dev \
-    libaio1 \
-    libecpg-dev \
-    libffi-dev \
-    libldap2-dev \
     libpq-dev \
-    libsasl2-2 \
-    libsasl2-dev \
-    libsasl2-modules-gssapi-mit \
-    libssl-dev && \
-    apt-get clean && \
-    pip install -U pip
+    gcc \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install pips
-COPY requirements*.txt ./
-RUN pip install -r requirements.txt && \
-    pip install -r requirements-dev.txt
+# Upgrade pip and install wheel for faster installs
+RUN pip install --upgrade pip wheel setuptools
 
-# Configure application
+# Install Superset with pre-built wheels to avoid building pandas from source
+RUN pip install --no-cache-dir apache-superset
+
+# Expose port 8088 (Superset's default)
 EXPOSE 8088
-USER superset
-HEALTHCHECK CMD ["curl", "-f", "http://localhost:8088/health"]
-CMD ["gunicorn", "superset.app:create_app()"]
+
+# Initialize and start Superset
+CMD ["bash", "-c", "\
+    superset db upgrade && \
+    superset fab create-admin --username admin --firstname Superset --lastname Admin --email admin@superset.com --password admin && \
+    superset init && \
+    superset run -p 8088 -h 0.0.0.0 \
+"]
+
